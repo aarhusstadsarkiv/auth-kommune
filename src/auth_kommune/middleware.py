@@ -18,6 +18,20 @@ from starlette.routing import BaseRoute
 from .user import User
 
 
+class PostgreConnectionWrapper:
+    def __init__(self, conninfo: str = ""):
+        self.conninfo: str = conninfo
+        self.connection: AsyncConnection | None = None
+
+    async def connect(self):
+        if self.connection is None:
+            self.connection = await AsyncConnection.connect(self.conninfo)
+
+    async def close(self):
+        if self.connection is not None:
+            await self.connection.close()
+
+
 class AccessLogMiddleware(BaseHTTPMiddleware):
     """
     Middleware for logging access to routes.
@@ -37,12 +51,12 @@ class AccessLogMiddleware(BaseHTTPMiddleware):
         self,
         app: Starlette,
         *,
-        connection: AsyncConnection,
+        connection: PostgreConnectionWrapper,
         routes: list[BaseRoute | str],
         query_routes: list[BaseRoute | str],
     ):
         super().__init__(app)
-        self.connection: AsyncConnection = connection
+        self.connection: AsyncConnection = connection.connection
         self.routes: set[str] = {
             path
             for r in routes
@@ -135,13 +149,13 @@ class PostgresAuthenticationBackend(AuthenticationBackend):
     is returned. Else, the method interacts with the database to create, read, or update the user details which are
     then returned.
 
-    :param connection: An instance of the ``AsyncConnection`` class used for authentication.
+    :param connection: An instance of the ``PostgreConnectionWrapper`` class used for authentication.
 
     :ivar connection: The database connection used for authentication.
     """
 
-    def __init__(self, connection: AsyncConnection):
-        self.connection: AsyncConnection = connection
+    def __init__(self, connection: PostgreConnectionWrapper):
+        self.connection: AsyncConnection = connection.connection
 
     async def update_user(self, user: User) -> None:
         async with self.connection.cursor() as cursor:
