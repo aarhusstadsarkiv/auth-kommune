@@ -24,7 +24,7 @@ __all__ = [
 ]
 
 authentication_routes: list[Route] = [
-    Route("/login", handler_login),
+    Route("/login", handler_login, name="login"),
     Route("/login/auth", handler_auth, name="auth"),
-    Route("/logout", handler_logout),
+    Route("/logout", handler_logout, name="logout"),
 ]
