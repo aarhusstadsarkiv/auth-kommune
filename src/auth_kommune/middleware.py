@@ -37,12 +37,12 @@ class AccessLogMiddleware(BaseHTTPMiddleware):
     Middleware for logging access to routes.
 
     :param app: The Starlette application.
-    :param connection: The database connection used for logging.
+    :param connection_wrapper: The database connection used for logging.
     :param routes: List of BaseRoute or string representing routes to log access for.
     :param query_routes: List of BaseRoute or string representing routes to log access for including query parameters.
 
     :ivar app: The Starlette application instance.
-    :ivar connection: The database connection instance used for logging.
+    :ivar connection_wrapper: The database connection instance used for logging.
     :ivar routes: Set of routes to log access for.
     :ivar query_routes: Set of routes to log access for including query parameters.
     """
@@ -51,12 +51,12 @@ class AccessLogMiddleware(BaseHTTPMiddleware):
         self,
         app: Starlette,
         *,
-        connection: PostgreConnectionWrapper,
+        connection_wrapper: PostgreConnectionWrapper,
         routes: list[BaseRoute | str],
         query_routes: list[BaseRoute | str],
     ):
         super().__init__(app)
-        self.connection: AsyncConnection = connection.connection
+        self.connection_wrapper: PostgreConnectionWrapper = connection_wrapper
         self.routes: set[str] = {
             path
             for r in routes
@@ -101,7 +101,7 @@ class AccessLogMiddleware(BaseHTTPMiddleware):
         :param query_params: A boolean indicating whether to include the query parameters in the request path.
         Defaults to False.
         """
-        async with self.connection.cursor() as cur:
+        async with self.connection_wrapper.connection.cursor() as cur:
             await cur.execute(
                 "insert into access_logs"
                 " (time, user_id, request_method, path, response)"
@@ -114,7 +114,7 @@ class AccessLogMiddleware(BaseHTTPMiddleware):
                     response.status_code,
                 ],
             )
-            await self.connection.commit()
+            await self.connection_wrapper.connection.commit()
 
     async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
         """
@@ -149,16 +149,16 @@ class PostgresAuthenticationBackend(AuthenticationBackend):
     is returned. Else, the method interacts with the database to create, read, or update the user details which are
     then returned.
 
-    :param connection: An instance of the ``PostgreConnectionWrapper`` class used for authentication.
+    :param connection_wrapper: An instance of the ``PostgreConnectionWrapper`` class used for authentication.
 
-    :ivar connection: The database connection used for authentication.
+    :ivar connection_wrapper: The database connection used for authentication.
     """
 
-    def __init__(self, connection: PostgreConnectionWrapper):
-        self.connection: AsyncConnection = connection.connection
+    def __init__(self, connection_wrapper: PostgreConnectionWrapper):
+        self.connection_wrapper: PostgreConnectionWrapper = connection_wrapper
 
     async def update_user(self, user: User) -> None:
-        async with self.connection.cursor() as cursor:
+        async with self.connection_wrapper.connection.cursor() as cursor:
             await cursor.execute(
                 """
                 insert into users (id, name, email, roles) values (%s, %s, %s, %s)
@@ -166,7 +166,7 @@ class PostgresAuthenticationBackend(AuthenticationBackend):
                 """,
                 [user.id, user.name, user.email, Jsonb(user.roles)],
             )
-            await self.connection.commit()
+            await self.connection_wrapper.connection.commit()
 
     async def authenticate(self, conn: HTTPConnection) -> tuple[AuthCredentials, BaseUser] | None:
         """
