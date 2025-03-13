@@ -40,11 +40,13 @@ class AccessLogMiddleware(BaseHTTPMiddleware):
     :param connection_wrapper: The database connection used for logging.
     :param routes: List of BaseRoute or string representing routes to log access for.
     :param query_routes: List of BaseRoute or string representing routes to log access for including query parameters.
+    :param status_codes: List of HTTP status codes to log access for.
 
     :ivar app: The Starlette application instance.
     :ivar connection_wrapper: The database connection instance used for logging.
     :ivar routes: Set of routes to log access for.
     :ivar query_routes: Set of routes to log access for including query parameters.
+    :ivar status_codes: Set of status codes to log access for.
     """
 
     def __init__(
@@ -52,23 +54,25 @@ class AccessLogMiddleware(BaseHTTPMiddleware):
         app: Starlette,
         *,
         connection_wrapper: PostgreConnectionWrapper,
-        routes: list[BaseRoute | str],
-        query_routes: list[BaseRoute | str],
+        routes: list[BaseRoute | str] | None = None,
+        query_routes: list[BaseRoute | str] | None = None,
+        status_codes: list[int] | None = None,
     ):
         super().__init__(app)
         self.connection_wrapper: PostgreConnectionWrapper = connection_wrapper
         self.routes: set[str] = {
             path
-            for r in routes
+            for r in routes or []
             if (path := (r if isinstance(r, str) else getattr(r, "path", "")).strip("/").split("/")[0])
             and not (path.startswith("{") and path.endswith("}"))
         }
         self.query_routes: set[str] = {
             path
-            for r in query_routes
+            for r in query_routes or []
             if (path := (r if isinstance(r, str) else getattr(r, "path", "")).strip("/").split("/")[0])
             and not (path.startswith("{") and path.endswith("}"))
         }
+        self.status_codes: set[int] = set(status_codes or [])
 
     def match_route(self, request: Request) -> tuple[bool, bool]:
         """
@@ -135,7 +139,7 @@ class AccessLogMiddleware(BaseHTTPMiddleware):
         if request.user.is_authenticated and (route_match := self.match_route(request))[0]:
             time: datetime = datetime.now(timezone.utc)
             response: Response = await call_next(request)
-            if response.status_code <= 404:
+            if not self.status_codes or response.status_code in self.status_codes:
                 await self.log_access(time, request.user, request, response, route_match[1])
             return response
         else:
