@@ -55,7 +55,7 @@ class PostgreConnectionWrapper:
             await self.connection.close()
 
     @wraps(AsyncConnection.cursor)
-    async def cursor(self, *args, **kwargs) -> AsyncCursor:
+    def cursor(self, *args, **kwargs) -> AsyncCursor:
         return self.connection.cursor(*args, **kwargs)
 
     @wraps(AsyncConnection.commit)
