@@ -1,7 +1,11 @@
 from datetime import datetime
 from datetime import timezone
+from typing import Any
 
 from psycopg import AsyncConnection
+from psycopg import AsyncCursor
+from psycopg.abc import AdaptContext
+from psycopg.rows import AsyncRowFactory
 from psycopg.types.json import Jsonb
 from starlette.applications import Starlette
 from starlette.authentication import AuthCredentials
@@ -19,13 +23,29 @@ from .user import User
 
 
 class PostgreConnectionWrapper:
-    def __init__(self, conninfo: str = ""):
-        self.conninfo: str = conninfo
+    def __init__(
+        self,
+        conninfo: str = "",
+        *,
+        autocommit: bool = False,
+        prepare_threshold: int | None = 5,
+        context: AdaptContext | None = None,
+        row_factory: AsyncRowFactory | None = None,
+        cursor_factory: type[AsyncCursor] | None = None,
+    ):
         self.connection: AsyncConnection | None = None
+        self.conninfo: str = conninfo
+        self.connargs: dict[str, Any] = {
+            "autocommit": autocommit,
+            "prepare_threshold": prepare_threshold,
+            "context": context,
+            "row_factory": row_factory,
+            "cursor_factory": cursor_factory,
+        }
 
     async def connect(self):
         if self.connection is None:
-            self.connection = await AsyncConnection.connect(self.conninfo)
+            self.connection = await AsyncConnection.connect(self.conninfo, **self.connargs)
 
     async def close(self):
         if self.connection is not None:
