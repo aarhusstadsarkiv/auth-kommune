@@ -1,5 +1,6 @@
 from datetime import datetime
 from datetime import timezone
+from functools import wraps
 from typing import Any
 
 from psycopg import AsyncConnection
@@ -43,13 +44,23 @@ class PostgreConnectionWrapper:
             "cursor_factory": cursor_factory,
         }
 
-    async def connect(self):
+    async def connect(self) -> AsyncConnection:
         if self.connection is None:
             self.connection = await AsyncConnection.connect(self.conninfo, **self.connargs)
+        return self.connection
 
+    @wraps(AsyncConnection.close)
     async def close(self):
         if self.connection is not None:
             await self.connection.close()
+
+    @wraps(AsyncConnection.cursor)
+    async def cursor(self, *args, **kwargs) -> AsyncCursor:
+        return self.connection.cursor(*args, **kwargs)
+
+    @wraps(AsyncConnection.commit)
+    async def commit(self):
+        await self.connection.commit()
 
 
 class AccessLogMiddleware(BaseHTTPMiddleware):
@@ -125,7 +136,7 @@ class AccessLogMiddleware(BaseHTTPMiddleware):
         :param query_params: A boolean indicating whether to include the query parameters in the request path.
         Defaults to False.
         """
-        async with self.connection_wrapper.connection.cursor() as cur:
+        async with self.connection_wrapper.cursor() as cur:
             await cur.execute(
                 "insert into access_logs"
                 " (time, user_id, request_method, path, response)"
@@ -138,7 +149,7 @@ class AccessLogMiddleware(BaseHTTPMiddleware):
                     response.status_code,
                 ],
             )
-            await self.connection_wrapper.connection.commit()
+            await self.connection_wrapper.commit()
 
     async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
         """
@@ -184,7 +195,7 @@ class PostgresAuthenticationBackend(AuthenticationBackend):
         self.connection_wrapper: PostgreConnectionWrapper = connection_wrapper
 
     async def update_user(self, user: User) -> None:
-        async with self.connection_wrapper.connection.cursor() as cursor:
+        async with self.connection_wrapper.cursor() as cursor:
             await cursor.execute(
                 """
                 insert into users (id, name, email, roles) values (%s, %s, %s, %s)
@@ -192,7 +203,7 @@ class PostgresAuthenticationBackend(AuthenticationBackend):
                 """,
                 [user.id, user.name, user.email, Jsonb(user.roles)],
             )
-            await self.connection_wrapper.connection.commit()
+            await self.connection_wrapper.commit()
 
     async def authenticate(self, conn: HTTPConnection) -> tuple[AuthCredentials, BaseUser] | None:
         """
