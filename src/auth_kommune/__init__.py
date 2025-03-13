@@ -1,13 +1,13 @@
 from starlette.routing import Route
 
-from .authentication import create_oauth_state
-from .authentication import get_oauth_state
-from .authentication import handler_auth
-from .authentication import handler_login
-from .authentication import handler_logout
 from .middleware import AccessLogMiddleware
 from .middleware import PostgreConnectionWrapper
 from .middleware import PostgresAuthenticationBackend
+from .routes import create_oauth_state
+from .routes import get_oauth_state
+from .routes import handler_auth
+from .routes import handler_login
+from .routes import handler_logout
 from .user import User
 
 __all__ = [
