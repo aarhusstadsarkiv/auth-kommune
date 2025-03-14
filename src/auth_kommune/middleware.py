@@ -191,8 +191,20 @@ class PostgresAuthenticationBackend(AuthenticationBackend):
     :ivar connection_wrapper: The database connection used for authentication.
     """
 
-    def __init__(self, connection_wrapper: PostgreConnectionWrapper):
+    def __init__(
+        self,
+        connection_wrapper: PostgreConnectionWrapper,
+        *,
+        key_id: str = "id",
+        key_name: str = "name",
+        key_email: str = "email",
+        key_roles: str = "role",
+    ):
         self.connection_wrapper: PostgreConnectionWrapper = connection_wrapper
+        User.key_id = key_id
+        User.key_name = key_name
+        User.key_email = key_email
+        User.key_roles = key_roles
 
     async def update_user(self, user: User) -> None:
         async with self.connection_wrapper.cursor() as cursor:
