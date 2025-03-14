@@ -187,6 +187,10 @@ class PostgresAuthenticationBackend(AuthenticationBackend):
     then returned.
 
     :param connection_wrapper: An instance of the ``PostgreConnectionWrapper`` class used for authentication.
+    :param key_id: Key to use to get id from userinfo object.
+    :param key_name: Key to use to get name from userinfo object.
+    :param key_email: Key to use to get email from userinfo object.
+    :param key_roles: Key to use to get roles from userinfo object.
 
     :ivar connection_wrapper: The database connection used for authentication.
     """
