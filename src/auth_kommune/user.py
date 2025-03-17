@@ -8,9 +8,10 @@ class User(BaseUser):
     key_name: str = "name"
     key_email: str = "email"
     key_roles: str = "role"
+    email_id: bool = False
 
     def __init__(self, userinfo: dict[str, Any]):
-        self.id: str = userinfo[self.key_id]
+        self.id: str = (userinfo[self.key_email].split("@")[0]) if self.email_id else userinfo[self.key_id]
         self.name: str = userinfo[self.key_name]
         self.email: str = userinfo[self.key_email]
         self.roles: list[str] = userinfo[self.key_roles]

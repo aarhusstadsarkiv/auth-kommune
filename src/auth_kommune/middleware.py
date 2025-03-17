@@ -203,12 +203,14 @@ class PostgresAuthenticationBackend(AuthenticationBackend):
         key_name: str = "name",
         key_email: str = "email",
         key_roles: str = "role",
+        email_id: bool = False,
     ):
         self.connection_wrapper: PostgreConnectionWrapper = connection_wrapper
         User.key_id = key_id
         User.key_name = key_name
         User.key_email = key_email
         User.key_roles = key_roles
+        User.email_id = email_id
 
     async def update_user(self, user: User) -> None:
         async with self.connection_wrapper.cursor() as cursor:
