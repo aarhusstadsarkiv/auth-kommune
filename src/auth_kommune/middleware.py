@@ -193,6 +193,7 @@ class PostgresAuthenticationBackend(AuthenticationBackend):
     :param key_roles: Key to use to get roles from userinfo object.
     :param key_department: Key to use to get department ID from userinfo object.
     :param key_department_tree: Key to use to get department tree IDs from userinfo object.
+    :param transform_userinfo: Optional function to transform the userinfo object before passing it to the ``User`` object.
 
     :ivar connection_wrapper: The database connection used for authentication.
     """
@@ -208,8 +209,10 @@ class PostgresAuthenticationBackend(AuthenticationBackend):
         key_department: str | None = "department",
         key_department_tree: str | None = "department_tree",
         email_id: bool = False,
+        transform_userinfo: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
     ):
         self.connection_wrapper: PostgreConnectionWrapper = connection_wrapper
+        self.transform_userinfo: Callable[[dict[str, Any]], dict[str, Any]] | None = transform_userinfo
         User.key_id = key_id
         User.key_name = key_name
         User.key_email = key_email
@@ -251,6 +254,9 @@ class PostgresAuthenticationBackend(AuthenticationBackend):
         elif datetime.now(timezone.utc).timestamp() >= userinfo["exp"]:
             conn.session.pop("user", None)
             return AuthCredentials(), UnauthenticatedUser()
+
+        if self.transform_userinfo:
+            userinfo = self.transform_userinfo(userinfo)
 
         user = User(userinfo)
         await self.update_user(user)
