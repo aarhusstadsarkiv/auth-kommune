@@ -3,6 +3,7 @@ from datetime import timezone
 from functools import wraps
 from re import Pattern
 from typing import Any
+from typing import Callable
 
 from psycopg import AsyncConnection
 from psycopg import AsyncCursor
@@ -71,8 +72,8 @@ class AccessLogMiddleware(BaseHTTPMiddleware):
 
     :param app: The Starlette application.
     :param connection_wrapper: The database connection used for logging.
-    :param routes: List of BaseRoute or string representing routes to log access for.
-    :param query_routes: List of BaseRoute or string representing routes to log access for including query parameters.
+    :param routes: List of Route, Mount, or string representing routes to log access for.
+    :param query_routes: List of Route, Mount, or string representing routes to log access for including query parameters.
     :param status_codes: List of HTTP status codes to log access for.
 
     :ivar app: The Starlette application instance.
@@ -190,6 +191,8 @@ class PostgresAuthenticationBackend(AuthenticationBackend):
     :param key_name: Key to use to get name from userinfo object.
     :param key_email: Key to use to get email from userinfo object.
     :param key_roles: Key to use to get roles from userinfo object.
+    :param key_department: Key to use to get department ID from userinfo object.
+    :param key_department_tree: Key to use to get department tree IDs from userinfo object.
 
     :ivar connection_wrapper: The database connection used for authentication.
     """
@@ -202,6 +205,8 @@ class PostgresAuthenticationBackend(AuthenticationBackend):
         key_name: str = "name",
         key_email: str = "email",
         key_roles: str = "role",
+        key_department: str | None = "department",
+        key_department_tree: str | None = "department_tree",
         email_id: bool = False,
     ):
         self.connection_wrapper: PostgreConnectionWrapper = connection_wrapper
@@ -209,16 +214,24 @@ class PostgresAuthenticationBackend(AuthenticationBackend):
         User.key_name = key_name
         User.key_email = key_email
         User.key_roles = key_roles
+        User.key_department = key_department
+        User.key_department_tree = key_department_tree
         User.email_id = email_id
 
+    # noinspection SqlResolve
     async def update_user(self, user: User) -> None:
         async with self.connection_wrapper.cursor() as cursor:
             await cursor.execute(
                 """
-                insert into users (id, name, email, roles) values (%s, %s, %s, %s)
-                on conflict (id) do update set name = excluded.name, email = excluded.email, roles = excluded.roles
+                insert into users (id, name, email, department, department_tree, roles) values (%s, %s, %s, %s, %s, %s)
+                on conflict (id) do update set
+                                               name = excluded.name,
+                                               email = excluded.email,
+                                               department = excluded.department,
+                                               department_tree = excluded.department_tree,
+                                               roles = excluded.roles
                 """,
-                [user.id, user.name, user.email, Jsonb(user.roles)],
+                [user.id, user.name, user.email, user.department, user.department_tree, Jsonb(user.roles)],
             )
             await self.connection_wrapper.commit()
 

@@ -18,12 +18,16 @@ class User(BaseUser):
     :ivar name: User name.
     :ivar email: User email.
     :ivar roles: User roles.
+    :ivar department: User department ID.
+    :ivar department_tree: User department tree IDs.
     """
 
     key_id: str = "id"
     key_name: str = "name"
     key_email: str = "email"
     key_roles: str = "role"
+    key_department: str | None = "department"
+    key_department_tree: str | None = "department_tree"
     email_id: bool = False
 
     def __init__(self, userinfo: dict[str, Any]):
@@ -35,6 +39,10 @@ class User(BaseUser):
         self.name: str = userinfo[self.key_name]
         self.email: str = userinfo[self.key_email]
         self.roles: list[str] = userinfo[self.key_roles]
+        self.department: int | None = userinfo[self.key_department] if self.key_department else None
+        self.department_tree: list[int] | None = (
+            userinfo[self.key_department_tree] if self.key_department_tree else None
+        )
 
     @property
     def is_authenticated(self):
