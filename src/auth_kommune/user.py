@@ -55,3 +55,6 @@ class User(BaseUser):
     @property
     def identity(self) -> str:
         return self.id
+
+
+class DefaultUser(User): ...

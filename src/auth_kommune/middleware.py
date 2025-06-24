@@ -23,6 +23,7 @@ from starlette.responses import Response
 from starlette.routing import Mount
 from starlette.routing import Route
 
+from .user import DefaultUser
 from .user import User
 
 
@@ -253,7 +254,7 @@ class PostgresAuthenticationBackend(AuthenticationBackend):
             or None if authentication fails.
         """
         if not (userinfo := conn.session.get("user")) and self.default_userinfo:
-            user = User(self.default_userinfo)
+            user = DefaultUser(self.default_userinfo)
             return AuthCredentials(["authenticated", *user.roles]), user
         elif not userinfo:
             return AuthCredentials(), UnauthenticatedUser()
