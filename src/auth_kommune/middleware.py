@@ -1,6 +1,7 @@
 from datetime import datetime
 from datetime import timezone
 from functools import wraps
+from re import Pattern
 from typing import Any
 
 from psycopg import AsyncConnection
@@ -18,7 +19,8 @@ from starlette.middleware.base import RequestResponseEndpoint
 from starlette.requests import HTTPConnection
 from starlette.requests import Request
 from starlette.responses import Response
-from starlette.routing import BaseRoute
+from starlette.routing import Mount
+from starlette.routing import Route
 
 from .user import User
 
@@ -85,23 +87,17 @@ class AccessLogMiddleware(BaseHTTPMiddleware):
         app: Starlette,
         *,
         connection_wrapper: PostgreConnectionWrapper,
-        routes: list[BaseRoute | str] | None = None,
-        query_routes: list[BaseRoute | str] | None = None,
+        routes: list[Route | Mount | str] | None = None,
+        query_routes: list[Route | Mount | str] | None = None,
         status_codes: list[int] | None = None,
     ):
         super().__init__(app)
         self.connection_wrapper: PostgreConnectionWrapper = connection_wrapper
-        self.routes: set[str] = {
-            path
-            for r in routes or []
-            if (path := (r if isinstance(r, str) else getattr(r, "path", "")).strip("/").split("/")[0])
-            and not (path.startswith("{") and path.endswith("}"))
+        self.routes: set[str | Pattern[str]] = {
+            p for r in routes or [] if (p := r if isinstance(r, str) else r.path_regex)
         }
-        self.query_routes: set[str] = {
-            path
-            for r in query_routes or []
-            if (path := (r if isinstance(r, str) else getattr(r, "path", "")).strip("/").split("/")[0])
-            and not (path.startswith("{") and path.endswith("}"))
+        self.query_routes: set[str | Pattern[str]] = {
+            p for r in query_routes or [] if (p := r if isinstance(r, str) else r.path_regex)
         }
         self.status_codes: set[int] = set(status_codes or [])
 
@@ -113,8 +109,11 @@ class AccessLogMiddleware(BaseHTTPMiddleware):
         :return: A tuple containing two booleans indicating whether the request path matches
                  any of the defined routes and query routes, respectively.
         """
-        path: str = request.url.path.strip("/").split("/", 1)[0]
-        return path in self.routes, path in self.query_routes
+        path: str = request.url.path
+        return (
+            any(path.startswith(r) if isinstance(r, str) else r.match(path) for r in self.routes),
+            any(path.startswith(r) if isinstance(r, str) else r.match(path) for r in self.query_routes),
+        )
 
     async def log_access(
         self,
