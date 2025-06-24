@@ -194,6 +194,7 @@ class PostgresAuthenticationBackend(AuthenticationBackend):
     :param key_department: Key to use to get department ID from userinfo object.
     :param key_department_tree: Key to use to get department tree IDs from userinfo object.
     :param transform_userinfo: Optional function to transform the userinfo object before passing it to the ``User`` object.
+    :param default_userinfo: Optional default userinfo object to use if none is available.
 
     :ivar connection_wrapper: The database connection used for authentication.
     """
@@ -210,9 +211,11 @@ class PostgresAuthenticationBackend(AuthenticationBackend):
         key_department_tree: str | None = "department_tree",
         email_id: bool = False,
         transform_userinfo: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
+        default_userinfo: dict[str, Any] | None = None,
     ):
         self.connection_wrapper: PostgreConnectionWrapper = connection_wrapper
         self.transform_userinfo: Callable[[dict[str, Any]], dict[str, Any]] | None = transform_userinfo
+        self.default_userinfo: dict[str, Any] | None = default_userinfo
         User.key_id = key_id
         User.key_name = key_name
         User.key_email = key_email
@@ -249,7 +252,10 @@ class PostgresAuthenticationBackend(AuthenticationBackend):
         :return: A tuple containing the authenticated user's credentials and base user information,
             or None if authentication fails.
         """
-        if not (userinfo := conn.session.get("user")):
+        if not (userinfo := conn.session.get("user")) and self.default_userinfo:
+            user = User(self.default_userinfo)
+            return AuthCredentials(["authenticated", *user.roles]), user
+        elif not userinfo:
             return AuthCredentials(), UnauthenticatedUser()
         elif datetime.now(timezone.utc).timestamp() >= userinfo["exp"]:
             conn.session.pop("user", None)
