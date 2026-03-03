@@ -3,13 +3,13 @@ name = "auth-kommune"
 version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
-requires-python = ">=3.12"
+requires-python = ">=3.13"
 dependencies = [
-    "authlib>=1.5.1,<2",
+    "authlib>=1.6.9,<2",
     "httpx>=0.28.1",
     "itsdangerous>=2.2.0,<3",
-    "psycopg[binary]>=3.2.6,<4",
-    "starlette>=0.46.0,<1",
+    "psycopg[pool]>=3.3.3,<4",
+    "starlette>=0.52.1,<1",
 ]
 
 [project.urls]
@@ -18,7 +18,7 @@ Repository = "https://github.com/aarhusstadsarkiv/auth-kommune"
 
 [dependency-groups]
 dev = [
-    "ruff>=0.9.3,<1",
+    "ruff>=0.15.4,<1",
 ]
 
 [build-system]
