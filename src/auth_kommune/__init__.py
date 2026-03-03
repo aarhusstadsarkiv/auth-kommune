@@ -1,7 +1,7 @@
 from starlette.routing import Route
 
 from .middleware import AccessLogMiddleware
-from .middleware import PostgreConnectionWrapper
+from .middleware import ConnectionMiddleware
 from .middleware import PostgresAuthenticationBackend
 from .routes import create_oauth_state
 from .routes import get_oauth_state
@@ -12,7 +12,7 @@ from .user import User
 
 __all__ = [
     "AccessLogMiddleware",
-    "PostgreConnectionWrapper",
+    "ConnectionMiddleware",
     "PostgresAuthenticationBackend",
     "User",
     "authentication_routes",

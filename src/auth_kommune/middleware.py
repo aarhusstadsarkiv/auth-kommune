@@ -1,18 +1,15 @@
 from datetime import datetime
 from datetime import timezone
-from functools import wraps
-from typing import Any
 
 from psycopg import AsyncConnection
-from psycopg import AsyncCursor
-from psycopg.abc import AdaptContext
-from psycopg.rows import AsyncRowFactory
 from psycopg.types.json import Jsonb
+from psycopg_pool import AsyncConnectionPool
 from starlette.applications import Starlette
 from starlette.authentication import AuthCredentials
 from starlette.authentication import AuthenticationBackend
 from starlette.authentication import BaseUser
 from starlette.authentication import UnauthenticatedUser
+from starlette.datastructures import State
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.middleware.base import RequestResponseEndpoint
 from starlette.requests import HTTPConnection
@@ -23,44 +20,39 @@ from starlette.routing import BaseRoute
 from .user import User
 
 
-class PostgreConnectionWrapper:
-    def __init__(
-        self,
-        conninfo: str = "",
-        *,
-        autocommit: bool = False,
-        prepare_threshold: int | None = 5,
-        context: AdaptContext | None = None,
-        row_factory: AsyncRowFactory | None = None,
-        cursor_factory: type[AsyncCursor] | None = None,
-    ):
-        self.connection: AsyncConnection | None = None
-        self.conninfo: str = conninfo
-        self.connargs: dict[str, Any] = {
-            "autocommit": autocommit,
-            "prepare_threshold": prepare_threshold,
-            "context": context,
-            "row_factory": row_factory,
-            "cursor_factory": cursor_factory,
-        }
+class AppState(State):
+    # Global state
+    pool: AsyncConnectionPool
 
-    async def connect(self) -> AsyncConnection:
-        if self.connection is None:
-            self.connection = await AsyncConnection.connect(self.conninfo, **self.connargs)
-        return self.connection
+    # Request state
+    connection: AsyncConnection
 
-    @wraps(AsyncConnection.close)
-    async def close(self):
-        if self.connection is not None:
-            await self.connection.close()
 
-    @wraps(AsyncConnection.cursor)
-    def cursor(self, *args, **kwargs) -> AsyncCursor:
-        return self.connection.cursor(*args, **kwargs)
+class HTTPConnectionState[S: State = AppState](HTTPConnection):
+    @property
+    def state(self) -> S:
+        return super().state
 
-    @wraps(AsyncConnection.commit)
-    async def commit(self):
-        await self.connection.commit()
+
+class RequestState[S: State = AppState](Request):
+    @property
+    def app(self) -> Starlette:
+        return super().app
+
+    @property
+    def state(self) -> S:
+        return super().state
+
+    @property
+    def user(self) -> User:
+        return super().user
+
+
+class ConnectionMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: RequestState, call_next: RequestResponseEndpoint) -> Response:
+        async with request.state.pool.connection() as connection:
+            request.state.connection = connection
+            return await call_next(request)
 
 
 class AccessLogMiddleware(BaseHTTPMiddleware):
@@ -68,13 +60,11 @@ class AccessLogMiddleware(BaseHTTPMiddleware):
     Middleware for logging access to routes.
 
     :param app: The Starlette application.
-    :param connection_wrapper: The database connection used for logging.
     :param routes: List of BaseRoute or string representing routes to log access for.
     :param query_routes: List of BaseRoute or string representing routes to log access for including query parameters.
     :param status_codes: List of HTTP status codes to log access for.
 
     :ivar app: The Starlette application instance.
-    :ivar connection_wrapper: The database connection instance used for logging.
     :ivar routes: Set of routes to log access for.
     :ivar query_routes: Set of routes to log access for including query parameters.
     :ivar status_codes: Set of status codes to log access for.
@@ -84,13 +74,11 @@ class AccessLogMiddleware(BaseHTTPMiddleware):
         self,
         app: Starlette,
         *,
-        connection_wrapper: PostgreConnectionWrapper,
         routes: list[BaseRoute | str] | None = None,
         query_routes: list[BaseRoute | str] | None = None,
         status_codes: list[int] | None = None,
     ):
         super().__init__(app)
-        self.connection_wrapper: PostgreConnectionWrapper = connection_wrapper
         self.routes: set[str] = {
             path
             for r in routes or []
@@ -116,8 +104,9 @@ class AccessLogMiddleware(BaseHTTPMiddleware):
         path: str = request.url.path.strip("/").split("/", 1)[0]
         return path in self.routes, path in self.query_routes
 
+    @staticmethod
     async def log_access(
-        self,
+        connection: AsyncConnection,
         time: datetime,
         user: User,
         request: Request,
@@ -129,6 +118,7 @@ class AccessLogMiddleware(BaseHTTPMiddleware):
         path (including query parameters if specified), and response status code are recorded in the log entry. The
         time of the access is set to the current datetime in UTC.
 
+        :param connection: The database connection used for logging.
         :param time: The time the request has been received.
         :param user: The user object representing the user who accessed the system.
         :param request: The request object representing the incoming request.
@@ -136,7 +126,7 @@ class AccessLogMiddleware(BaseHTTPMiddleware):
         :param query_params: A boolean indicating whether to include the query parameters in the request path.
         Defaults to False.
         """
-        async with self.connection_wrapper.cursor() as cur:
+        async with connection.cursor() as cur:
             await cur.execute(
                 "insert into access_logs"
                 " (time, user_id, request_method, path, response)"
@@ -149,7 +139,7 @@ class AccessLogMiddleware(BaseHTTPMiddleware):
                     response.status_code,
                 ],
             )
-            await self.connection_wrapper.commit()
+            await connection.commit()
 
     async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
         """
@@ -171,7 +161,7 @@ class AccessLogMiddleware(BaseHTTPMiddleware):
             time: datetime = datetime.now(timezone.utc)
             response: Response = await call_next(request)
             if not self.status_codes or response.status_code in self.status_codes:
-                await self.log_access(time, request.user, request, response, route_match[1])
+                await self.log_access(request.state.connection, time, request.user, request, response, route_match[1])
             return response
         else:
             return await call_next(request)
@@ -186,42 +176,41 @@ class PostgresAuthenticationBackend(AuthenticationBackend):
     is returned. Else, the method interacts with the database to create, read, or update the user details which are
     then returned.
 
-    :param connection_wrapper: An instance of the ``PostgreConnectionWrapper`` class used for authentication.
     :param key_id: Key to use to get id from userinfo object.
     :param key_name: Key to use to get name from userinfo object.
     :param key_email: Key to use to get email from userinfo object.
     :param key_roles: Key to use to get roles from userinfo object.
-
-    :ivar connection_wrapper: The database connection used for authentication.
     """
 
     def __init__(
         self,
-        connection_wrapper: PostgreConnectionWrapper,
         *,
         key_id: str = "id",
         key_name: str = "name",
         key_email: str = "email",
         key_roles: str = "role",
     ):
-        self.connection_wrapper: PostgreConnectionWrapper = connection_wrapper
         User.key_id = key_id
         User.key_name = key_name
         User.key_email = key_email
         User.key_roles = key_roles
 
-    async def update_user(self, user: User) -> None:
-        async with self.connection_wrapper.cursor() as cursor:
+    @staticmethod
+    async def update_user(connection: AsyncConnection, user: User) -> None:
+        async with connection.cursor() as cursor:
             await cursor.execute(
                 """
-                insert into users (id, name, email, roles) values (%s, %s, %s, %s)
-                on conflict (id) do update set name = excluded.name, email = excluded.email, roles = excluded.roles
+                insert into users (id, name, email, roles)
+                values (%s, %s, %s, %s)
+                on conflict (id) do update set name  = excluded.name,
+                                               email = excluded.email,
+                                               roles = excluded.roles
                 """,
                 [user.id, user.name, user.email, Jsonb(user.roles)],
             )
-            await self.connection_wrapper.commit()
+            await connection.commit()
 
-    async def authenticate(self, conn: HTTPConnection) -> tuple[AuthCredentials, BaseUser] | None:
+    async def authenticate(self, conn: HTTPConnectionState) -> tuple[AuthCredentials, BaseUser] | None:
         """
         Authenticates the user based on the provided HTTP connection and the JWT stored in the ``user`` cookie. If the
         token is not available in the session or if is expired (``exp`` value contains the timestamp of expiration) has
@@ -239,5 +228,5 @@ class PostgresAuthenticationBackend(AuthenticationBackend):
             return AuthCredentials(), UnauthenticatedUser()
 
         user = User(userinfo)
-        await self.update_user(user)
+        await self.update_user(conn.state.connection, user)
         return AuthCredentials(["authenticated", *user.roles]), user
