@@ -1,5 +1,8 @@
 from datetime import datetime
 from datetime import timezone
+from re import Pattern
+from typing import Any
+from typing import Callable
 
 from psycopg import AsyncConnection
 from psycopg.types.json import Jsonb
@@ -15,8 +18,10 @@ from starlette.middleware.base import RequestResponseEndpoint
 from starlette.requests import HTTPConnection
 from starlette.requests import Request
 from starlette.responses import Response
-from starlette.routing import BaseRoute
+from starlette.routing import Mount
+from starlette.routing import Route
 
+from .user import DefaultUser
 from .user import User
 
 
@@ -62,6 +67,8 @@ class AccessLogMiddleware(BaseHTTPMiddleware):
     :param app: The Starlette application.
     :param routes: List of BaseRoute or string representing routes to log access for.
     :param query_routes: List of BaseRoute or string representing routes to log access for including query parameters.
+    :param routes: List of Route, Mount, or string representing routes to log access for.
+    :param query_routes: List of Route, Mount, or string representing routes to log access for including query parameters.
     :param status_codes: List of HTTP status codes to log access for.
 
     :ivar app: The Starlette application instance.
@@ -74,22 +81,16 @@ class AccessLogMiddleware(BaseHTTPMiddleware):
         self,
         app: Starlette,
         *,
-        routes: list[BaseRoute | str] | None = None,
-        query_routes: list[BaseRoute | str] | None = None,
+        routes: list[Route | Mount | str] | None = None,
+        query_routes: list[Route | Mount | str] | None = None,
         status_codes: list[int] | None = None,
     ):
         super().__init__(app)
-        self.routes: set[str] = {
-            path
-            for r in routes or []
-            if (path := (r if isinstance(r, str) else getattr(r, "path", "")).strip("/").split("/")[0])
-            and not (path.startswith("{") and path.endswith("}"))
+        self.routes: set[str | Pattern[str]] = {
+            p for r in routes or [] if (p := r if isinstance(r, str) else r.path_regex)
         }
-        self.query_routes: set[str] = {
-            path
-            for r in query_routes or []
-            if (path := (r if isinstance(r, str) else getattr(r, "path", "")).strip("/").split("/")[0])
-            and not (path.startswith("{") and path.endswith("}"))
+        self.query_routes: set[str | Pattern[str]] = {
+            p for r in query_routes or [] if (p := r if isinstance(r, str) else r.path_regex)
         }
         self.status_codes: set[int] = set(status_codes or [])
 
@@ -101,8 +102,11 @@ class AccessLogMiddleware(BaseHTTPMiddleware):
         :return: A tuple containing two booleans indicating whether the request path matches
                  any of the defined routes and query routes, respectively.
         """
-        path: str = request.url.path.strip("/").split("/", 1)[0]
-        return path in self.routes, path in self.query_routes
+        path: str = request.url.path
+        return (
+            any(path.startswith(r) if isinstance(r, str) else r.match(path) for r in self.routes),
+            any(path.startswith(r) if isinstance(r, str) else r.match(path) for r in self.query_routes),
+        )
 
     @staticmethod
     async def log_access(
@@ -180,6 +184,10 @@ class PostgresAuthenticationBackend(AuthenticationBackend):
     :param key_name: Key to use to get name from userinfo object.
     :param key_email: Key to use to get email from userinfo object.
     :param key_roles: Key to use to get roles from userinfo object.
+    :param key_department: Key to use to get department ID from userinfo object.
+    :param key_department_tree: Key to use to get department tree IDs from userinfo object.
+    :param transform_userinfo: Optional function to transform the userinfo object before passing it to the ``User`` object.
+    :param default_userinfo: Optional default userinfo object to use if none is available.
     """
 
     def __init__(
@@ -189,24 +197,37 @@ class PostgresAuthenticationBackend(AuthenticationBackend):
         key_name: str = "name",
         key_email: str = "email",
         key_roles: str = "role",
+        key_department: str | None = "department",
+        key_department_tree: str | None = "department_tree",
+        email_id: bool = False,
+        transform_userinfo: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
+        default_userinfo: dict[str, Any] | None = None,
     ):
+        self.transform_userinfo: Callable[[dict[str, Any]], dict[str, Any]] | None = transform_userinfo
+        self.default_userinfo: dict[str, Any] | None = default_userinfo
         User.key_id = key_id
         User.key_name = key_name
         User.key_email = key_email
         User.key_roles = key_roles
+        User.key_department = key_department
+        User.key_department_tree = key_department_tree
+        User.email_id = email_id
 
+    # noinspection SqlResolve
     @staticmethod
     async def update_user(connection: AsyncConnection, user: User) -> None:
         async with connection.cursor() as cursor:
             await cursor.execute(
                 """
-                insert into users (id, name, email, roles)
-                values (%s, %s, %s, %s)
-                on conflict (id) do update set name  = excluded.name,
+                insert into users (id, name, email, department, department_tree, roles) values (%s, %s, %s, %s, %s, %s)
+                on conflict (id) do update set
+                                               name = excluded.name,
                                                email = excluded.email,
+                                               department = excluded.department,
+                                               department_tree = excluded.department_tree,
                                                roles = excluded.roles
                 """,
-                [user.id, user.name, user.email, Jsonb(user.roles)],
+                [user.id, user.name, user.email, user.department, user.department_tree, Jsonb(user.roles)],
             )
             await connection.commit()
 
@@ -221,11 +242,17 @@ class PostgresAuthenticationBackend(AuthenticationBackend):
         :return: A tuple containing the authenticated user's credentials and base user information,
             or None if authentication fails.
         """
-        if not (userinfo := conn.session.get("user")):
+        if not (userinfo := conn.session.get("user")) and self.default_userinfo:
+            user = DefaultUser(self.default_userinfo)
+            return AuthCredentials(["authenticated", *user.roles]), user
+        elif not userinfo:
             return AuthCredentials(), UnauthenticatedUser()
         elif datetime.now(timezone.utc).timestamp() >= userinfo["exp"]:
             conn.session.pop("user", None)
             return AuthCredentials(), UnauthenticatedUser()
+
+        if self.transform_userinfo:
+            userinfo = self.transform_userinfo(userinfo)
 
         user = User(userinfo)
         await self.update_user(conn.state.connection, user)

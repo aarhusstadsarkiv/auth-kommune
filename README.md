@@ -9,10 +9,12 @@ Starlette authentication middlewares for Aarhus Kommune server applications.
 ```postgresql
 create table users
 (
-    id    varchar(7),
-    name  text  not null,
-    email text  not null,
-    roles jsonb not null,
+    id              varchar(7),
+    name            text  not null,
+    email           text  not null,
+    department      int,
+    department_tree int[],
+    roles           jsonb not null,
     primary key (id)
 );
 ```

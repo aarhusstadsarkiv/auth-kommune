@@ -5,6 +5,8 @@ from starlette.datastructures import URL
 from starlette.requests import Request
 from starlette.responses import RedirectResponse
 
+from .user import DefaultUser
+
 
 def create_oauth_state(config: Config) -> OAuth:
     oauth = OAuth(config)
@@ -25,7 +27,7 @@ async def handler_login(request: Request):
     """
     Redirect the user to Microsoft's authentication page and store the next page as a cookie named ``next``.
     """
-    if request.user.is_authenticated:
+    if not isinstance(request.user, DefaultUser) and request.user.is_authenticated:
         return RedirectResponse(request.query_params.get("next", request.session.get("next", "/")))
 
     ms_client: StarletteOAuth2App = get_oauth_state(request).create_client("microsoft")
